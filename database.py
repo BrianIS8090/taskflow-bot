@@ -190,15 +190,15 @@ class Database:
         """Получить задачу по ID"""
         conn = self._get_connection()
         cursor = conn.cursor()
-        
+
         cursor.execute(
             "SELECT id, title, description, deadline, status, created_at FROM task WHERE id = ?",
             (task_id,)
         )
-        
+
         row = cursor.fetchone()
         conn.close()
-        
+
         if row:
             return {
                 "id": row[0],
@@ -208,5 +208,112 @@ class Database:
                 "status": row[4],
                 "created_at": row[5]
             }
-        
+
         return None
+
+    def get_upcoming_tasks(self, hours: int = 24) -> List[Dict]:
+        """Получить задачи на ближайшие N часов"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        future = (datetime.now() + timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+
+        cursor.execute(
+            """SELECT id, title, description, deadline, status, created_at
+               FROM task
+               WHERE status = 'pending'
+               AND deadline >= ?
+               AND deadline <= ?
+               ORDER BY deadline""",
+            (now, future)
+        )
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        tasks = []
+        for row in rows:
+            tasks.append({
+                "id": row[0],
+                "title": row[1],
+                "description": row[2],
+                "deadline": row[3],
+                "status": row[4],
+                "created_at": row[5]
+            })
+
+        return tasks
+
+    def get_weekly_stats(self) -> Dict:
+        """Статистика за неделю"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        week_ago = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
+
+        # Выполнено за неделю
+        cursor.execute(
+            "SELECT COUNT(*) FROM task WHERE status = 'completed' AND created_at >= ?",
+            (week_ago,)
+        )
+        completed_week = cursor.fetchone()[0]
+
+        # Создано за неделю
+        cursor.execute(
+            "SELECT COUNT(*) FROM task WHERE created_at >= ?",
+            (week_ago,)
+        )
+        created_week = cursor.fetchone()[0]
+
+        # Задачи на сегодня
+        today = datetime.now().strftime("%Y-%m-%d")
+        today_start = today + " 00:00:00"
+        today_end = today + " 23:59:59"
+
+        cursor.execute(
+            """SELECT COUNT(*) FROM task
+               WHERE status = 'completed'
+               AND deadline >= ?
+               AND deadline <= ?""",
+            (today_start, today_end)
+        )
+        completed_today = cursor.fetchone()[0]
+
+        conn.close()
+
+        return {
+            "completed_week": completed_week,
+            "created_week": created_week,
+            "completed_today": completed_today
+        }
+
+    def search_tasks(self, query: str) -> List[Dict]:
+        """Поиск задач по названию"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """SELECT id, title, description, deadline, status, created_at
+               FROM task
+               WHERE status != 'completed'
+               AND (title LIKE ? OR description LIKE ?)
+               ORDER BY deadline""",
+            (f"%{query}%", f"%{query}%")
+        )
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        tasks = []
+        for row in rows:
+            tasks.append({
+                "id": row[0],
+                "title": row[1],
+                "description": row[2],
+                "deadline": row[3],
+                "status": row[4],
+                "created_at": row[5]
+            })
+
+        return tasks

@@ -81,6 +81,119 @@ async def cmd_stats(message: types.Message):
     await btn_stats(message)
 
 
+# Команда /help
+@dp.message(Command("help"))
+async def cmd_help(message: types.Message):
+    await message.answer(
+        "📖 <b>Как пользоваться ботом:</b>\n\n"
+        "1. Нажми <b>➕ Добавить</b> для создания задачи\n"
+        "2. Введи название и описание\n"
+        "3. Выбери дату и время дедлайна\n\n"
+        "<b>Управление задачами:</b>\n"
+        "• 📋 Задачи — просмотр списка\n"
+        "• 📅 Сегодня — задачи на сегодня\n"
+        "• ⚠️ Просроченные — просроченные задачи\n\n"
+        "<b>Команды:</b>\n"
+        "/start — Главное меню\n"
+        "/help — Эта справка\n"
+        "/add — Добавить задачу\n"
+        "/list — Все задачи\n"
+        "/today — Задачи на сегодня\n"
+        "/overdue — Просроченные задачи\n"
+        "/reminder — Напоминание о предстоящих задачах\n"
+        "/search &lt;запрос&gt; — Поиск задач",
+        parse_mode="HTML"
+    )
+
+
+# Команда /reminder
+@dp.message(Command("reminder"))
+async def cmd_reminder(message: types.Message):
+    """Напоминание о предстоящих задачах"""
+    tasks_24h = db.get_upcoming_tasks(hours=24)
+    overdue_tasks = db.get_overdue_tasks()
+
+    if not tasks_24h and not overdue_tasks:
+        await message.answer(
+            "✅ Всё хорошо! На ближайшие 24 часа задач нет.\n\n"
+            "Не забудь добавить новые задачи! 📝",
+            reply_markup=get_main_keyboard()
+        )
+        return
+
+    text = "🔔 <b>Напоминание:</b>\n\n"
+
+    # Сначала просроченные
+    if overdue_tasks:
+        text += "⚠️ <b>Просроченные задачи:</b>\n"
+        for task in overdue_tasks[:5]:  # Максимум 5 просроченных
+            deadline_str = task["deadline"].split(".")[0]
+            deadline = datetime.strptime(deadline_str, "%Y-%m-%d %H:%M:%S")
+            hours_overdue = int((datetime.now() - deadline).total_seconds() / 3600)
+            text += f"   ❌ {task['title']}\n"
+            text += f"      Просрочено на {hours_overdue}ч\n\n"
+
+    # Затем предстоящие
+    if tasks_24h:
+        text += "⏰ <b>Предстоящие задачи (24ч):</b>\n"
+        for task in tasks_24h[:10]:  # Максимум 10 задач
+            deadline_str = task["deadline"].split(".")[0]
+            deadline = datetime.strptime(deadline_str, "%Y-%m-%d %H:%M:%S")
+            hours_left = int((deadline - datetime.now()).total_seconds() / 3600)
+            time_str = f"{hours_left}ч" if hours_left > 0 else "< 1ч"
+            text += f"   {task['title']}\n"
+            text += f"      Осталось: {time_str}\n\n"
+
+    if len(tasks_24h) > 10:
+        text += f"... и ещё {len(tasks_24h) - 10} задач\n"
+
+    await message.answer(text, parse_mode="HTML", reply_markup=get_main_keyboard())
+
+
+# Команда /search
+@dp.message(Command("search"))
+async def cmd_search(message: types.Message):
+    """Поиск задач"""
+    # Извлекаем поисковый запрос
+    text = message.text.replace("/search", "").strip()
+
+    if not text:
+        await message.answer(
+            "🔍 <b>Поиск задач</b>\n\n"
+            "Использование: /search <запрос>\n\n"
+            "Примеры:\n"
+            "• /search отчет\n"
+            "• /search Python\n"
+            "• /search встреча",
+            parse_mode="HTML"
+        )
+        return
+
+    tasks = db.search_tasks(text)
+
+    if not tasks:
+        await message.answer(
+            f"❌ По запросу <b>{text}</b> задач не найдено.",
+            parse_mode="HTML",
+            reply_markup=get_main_keyboard()
+        )
+        return
+
+    result_text = f"🔍 <b>Результаты поиска:</b> {text}\n\n"
+
+    for i, task in enumerate(tasks[:15], 1):  # Максимум 15 задач
+        status_emoji = {"pending": "⏳", "running": "▶️"}.get(task["status"], "❓")
+        deadline_str = task["deadline"].split(".")[0]
+        deadline = datetime.strptime(deadline_str, "%Y-%m-%d %H:%M:%S")
+        result_text += f"{i}. {status_emoji} {task['title']}\n"
+        result_text += f"   ⏰ {deadline.strftime('%d.%m.%Y %H:%M')}\n\n"
+
+    if len(tasks) > 15:
+        result_text += f"... и ещё {len(tasks) - 15} задач\n"
+
+    await message.answer(result_text, parse_mode="HTML", reply_markup=get_main_keyboard())
+
+
 # ➕ Добавить задачу
 @dp.message(F.text == "➕ Добавить")
 async def btn_add(message: types.Message, state: FSMContext):
@@ -337,15 +450,25 @@ async def btn_all_tasks(message: types.Message):
 @dp.message(F.text == "📊 Статистика")
 async def btn_stats(message: types.Message):
     stats = db.get_stats()
-    
-    text = "📊 Статистика:\n\n"
+    weekly = db.get_weekly_stats()
+
+    text = "📊 <b>Статистика:</b>\n\n"
+
+    # Общая статистика
+    text += "<b>Сейчас:</b>\n"
     text += f"📋 Всего задач: {stats['total']}\n"
     text += f"⏳ Ожидают: {stats['pending']}\n"
     text += f"▶️ В работе: {stats['running']}\n"
     text += f"✅ Выполнено: {stats['completed']}\n"
-    text += f"⚠️ Просрочено: {stats['overdue']}"
-    
-    await message.answer(text, reply_markup=get_main_keyboard())
+    text += f"⚠️ Просрочено: {stats['overdue']}\n\n"
+
+    # Статистика за неделю
+    text += "<b>За неделю:</b>\n"
+    text += f"✅ Выполнено: {weekly['completed_week']}\n"
+    text += f"📝 Создано: {weekly['created_week']}\n"
+    text += f"📅 Сегодня выполнено: {weekly['completed_today']}"
+
+    await message.answer(text, parse_mode="HTML", reply_markup=get_main_keyboard())
 
 
 # 🔙 Назад
